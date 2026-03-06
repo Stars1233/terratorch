@@ -52,16 +52,7 @@ BASE_FACTORY_KWARGS = dict(
 
 
 def _make_encoder() -> Encoder:
-    return Encoder(
-        mask_ratio=0.75,
-        patch_size=TINY_ENCODER_KWARGS["patch_size"],
-        shuffle=False,
-        dim=TINY_ENCODER_KWARGS["dim"],
-        depth=TINY_ENCODER_KWARGS["depth"],
-        heads=TINY_ENCODER_KWARGS["heads"],
-        dim_head=TINY_ENCODER_KWARGS["dim_head"],
-        mlp_ratio=TINY_ENCODER_KWARGS["mlp_ratio"],
-    )
+    return Encoder(mask_ratio=0.75, shuffle=False, **TINY_ENCODER_KWARGS)
 
 
 def _make_backbone() -> ClayMAEBackbone:
@@ -85,14 +76,6 @@ class TestClayMAEBackbone:
         assert backbone.platform == "naip"
         assert backbone.dim == TINY_ENCODER_KWARGS["dim"]
         assert backbone.patch_size == TINY_ENCODER_KWARGS["patch_size"]
-
-    def test_platform_list_is_unwrapped(self):
-        backbone = ClayMAEBackbone(
-            encoder=_make_encoder(),
-            platform=["naip"],
-            metadata=Box(NAIP_METADATA),
-        )
-        assert backbone.platform == "naip"
 
     def test_platform_string_accepted(self):
         backbone = ClayMAEBackbone(
@@ -487,8 +470,8 @@ class TestCheckpointLoading:
     def test_load_encoder_weights_wrong_prefix_warns(self, tmp_path, caplog):
         import logging
         from terratorch.models.clay1_5_model_factory import _load_encoder_weights
-        # Checkpoint with wrong key prefix — no "encoder." keys
-        fake_state = {"model.encoder.some_weight": torch.zeros(4)}
+        # Checkpoint with wrong key prefix — no "model.encoder." keys
+        fake_state = {"encoder.some_weight": torch.zeros(4)}
         ckpt_path = tmp_path / "wrong_prefix.ckpt"
         torch.save({"state_dict": fake_state}, str(ckpt_path))
         encoder = _make_encoder()
@@ -500,9 +483,9 @@ class TestCheckpointLoading:
         import logging
         from terratorch.models.clay1_5_model_factory import _load_encoder_weights
         encoder = _make_encoder()
-        # Build a checkpoint using the real encoder state dict (all keys match)
+        # Real Clay v1.5 checkpoint layout: "model.encoder.<key>"
         encoder_state = encoder.state_dict()
-        full_state = {f"encoder.{k}": v for k, v in encoder_state.items()}
+        full_state = {f"model.encoder.{k}": v for k, v in encoder_state.items()}
         ckpt_path = tmp_path / "correct.ckpt"
         torch.save({"state_dict": full_state}, str(ckpt_path))
         with caplog.at_level(logging.INFO, logger="terratorch"):

@@ -29,6 +29,11 @@ SUPPORTED_TASKS = PIXEL_WISE_TASKS + SCALAR_TASKS
 # These are ignored when building the terratorch decoder kwargs.
 _CLAY_DECODER_KEYS = {"dim", "depth", "heads", "dim_head", "mlp_ratio", "ratio"}
 
+
+def _strip_clay_keys(kwargs: dict) -> dict:
+    return {k: v for k, v in kwargs.items() if k not in _CLAY_DECODER_KEYS}
+
+
 logger = logging.getLogger("terratorch")
 
 
@@ -170,10 +175,7 @@ class Clay1_5ModelFactory(ModelFactory):
 
         decoder_cls = _get_decoder(decoder)
         decoder_kwargs, _ = extract_prefix_keys(kwargs, "decoder_")
-        # Remove Clay v1.5 internal decoder keys that conflict with the decoder_ prefix
-        for clay_key in _CLAY_DECODER_KEYS:
-            decoder_kwargs.pop(clay_key, None)
-        decoder_instance = decoder_cls(feature_channels, **decoder_kwargs)
+        decoder_instance = decoder_cls(feature_channels, **_strip_clay_keys(decoder_kwargs))
 
         head_kwargs, _ = extract_prefix_keys(kwargs, "head_")
         if num_classes:
@@ -190,9 +192,7 @@ class Clay1_5ModelFactory(ModelFactory):
             args = aux_decoder.decoder_args if aux_decoder.decoder_args else {}
             aux_decoder_cls = _get_decoder(aux_decoder.decoder)
             aux_decoder_kwargs, _ = extract_prefix_keys(args, "decoder_")
-            for clay_key in _CLAY_DECODER_KEYS:
-                aux_decoder_kwargs.pop(clay_key, None)
-            aux_decoder_instance = aux_decoder_cls(feature_channels, **aux_decoder_kwargs)
+            aux_decoder_instance = aux_decoder_cls(feature_channels, **_strip_clay_keys(aux_decoder_kwargs))
             aux_head_kwargs, _ = extract_prefix_keys(args, "head_")
             if num_classes:
                 aux_head_kwargs["num_classes"] = num_classes
@@ -229,15 +229,16 @@ def _load_encoder_weights(encoder: nn.Module, ckpt_path: str) -> None:
     logger.info(f"Loading encoder weights from {ckpt_path}")
     checkpoint = torch.load(ckpt_path, map_location="cpu")
     state_dict = checkpoint.get("state_dict", checkpoint)
-    # Clay v1.5 checkpoints store the full ClayMAE; extract only encoder weights
+    # Clay v1.5 checkpoints store the full ClayMAE under "model.encoder.*"
+    prefix = "model.encoder."
     encoder_state = {
-        k[len("encoder."):]: v
+        k[len(prefix):]: v
         for k, v in state_dict.items()
-        if k.startswith("encoder.")
+        if k.startswith(prefix)
     }
     if not encoder_state:
         logger.warning(
-            "No keys with prefix 'encoder.' found in checkpoint. "
+            f"No keys with prefix '{prefix}' found in checkpoint. "
             "The encoder weights were NOT loaded. Keys found: "
             f"{list(state_dict.keys())[:10]} ..."
         )
@@ -267,7 +268,7 @@ def _build_appropriate_model(
             patch_size=patch_size, padding=padding, rescale=rescale,
             auxiliary_heads=auxiliary_heads,
         )
-    elif task in SCALAR_TASKS:
+    if task in SCALAR_TASKS:
         # rescale is not passed: ScalarOutputModel does not do spatial output
         return ScalarOutputModel(
             task, backbone, decoder, head_kwargs,
