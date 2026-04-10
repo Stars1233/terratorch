@@ -834,7 +834,12 @@ class PrithviMAE(nn.Module):
 
         loss = (pred - target) ** 2
         loss = loss.mean(dim=-1)  # [N, L], mean loss per patch
-        loss = (loss * mask).sum() / mask.sum()  # mean loss on removed patches
+
+        mask=mask.float()
+        mask_sum=mask.sum()
+        if mask_sum == 0:
+            return torch.zeros((), device=loss.device, dtype=loss.dtype)
+        loss = (loss * mask).sum() / mask_sum  # mean loss on removed patches
         return loss
 
     def forward(
