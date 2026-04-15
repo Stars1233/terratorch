@@ -56,6 +56,7 @@ from terratorch.datasets.substation import Substation
 from terratorch.datasets.utils import HLSBands, OpticalBands, SARBands
 
 # TorchGeo RasterDatasets
+from terratorch.datasets.embedding_dataset import EmbeddingDataset
 from terratorch.datasets.wsf import WSF2019, WSFEvolution
 
 # Surya datasets
@@ -111,4 +112,5 @@ __all__ = (
     "mVHR10",
     "Substation",
     "HelioNetCDFDataset",
+    "EmbeddingDataset",
 )

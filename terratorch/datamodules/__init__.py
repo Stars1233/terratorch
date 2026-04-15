@@ -8,6 +8,9 @@ from terratorch.datamodules.generic_pixel_wise_data_module import (
     GenericNonGeoPixelwiseRegressionDataModule,
     GenericNonGeoSegmentationDataModule,
 )
+from terratorch.datamodules.embedding_classification_data_module import (
+    EmbeddingClassificationDataModule,
+)
 from terratorch.datamodules.generic_scalar_label_data_module import (
     GenericNonGeoClassificationDataModule,
 )
@@ -77,6 +80,7 @@ except ImportError:
     pass
 
 __all__ = [
+    "EmbeddingClassificationDataModule",
     "GenericNonGeoSegmentationDataModule",
     "GenericNonGeoPixelwiseRegressionDataModule",
     "GenericNonGeoClassificationDataModule",
