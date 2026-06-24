@@ -834,12 +834,7 @@ class PrithviMAE(nn.Module):
 
         loss = (pred - target) ** 2
         loss = loss.mean(dim=-1)  # [N, L], mean loss per patch
-
-        mask=mask.float()
-        mask_sum=mask.sum()
-        if mask_sum == 0:
-            return torch.zeros((), device=loss.device, dtype=loss.dtype)
-        loss = (loss * mask).sum() / mask_sum  # mean loss on removed patches
+        loss = (loss * mask).sum() / mask.sum()  # mean loss on removed patches
         return loss
 
     def forward(
@@ -847,7 +842,7 @@ class PrithviMAE(nn.Module):
         pixel_values: torch.Tensor,
         temporal_coords: None | torch.Tensor = None,
         location_coords: None | torch.Tensor = None,
-        mask_ratio: float = None,
+        mask_ratio: float | None = None,
     ):
 
         if len(pixel_values.shape) == 4 and self.encoder.patch_embed.input_size[0] == 1:
@@ -858,6 +853,8 @@ class PrithviMAE(nn.Module):
             time_dim_added = False
 
         mask_ratio = self.mask_ratio if mask_ratio is None else mask_ratio
+        if mask_ratio == 0.0:
+            raise ValueError("mask_ratio=0.0 results in no masked patches and an undefined reconstruction loss. Use a mask_ratio > 0.0 for training.")
         latent, mask, ids_restore = self.encoder(pixel_values, temporal_coords, location_coords, mask_ratio)
         pred = self.decoder(latent, ids_restore, temporal_coords, location_coords, input_size=pixel_values.shape)
         loss = self.forward_loss(pixel_values, pred, mask)
