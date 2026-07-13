@@ -161,7 +161,7 @@ vllm_test = [
 ]
 
 tortilla = [
-  "tacoreader==0.5.6",
+    "tacoreader>=2.4.0",
 ]
 
 [project.urls]
