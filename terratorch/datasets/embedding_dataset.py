@@ -14,7 +14,7 @@ class EmbeddingDataset(Dataset):
         self.data_root = Path(data_root)
         self.embeddings = torch.load(self.data_root / "embeddings.pt", weights_only=True)
         self.labels = torch.load(self.data_root / "labels.pt", weights_only=True)
-        self.patch_ids = torch.load(self.data_root / "patch_ids.pt", weights_only=False)
+        self.patch_ids = torch.load(self.data_root / "patch_ids.pt", weights_only=True)
 
         if len(self.embeddings) != len(self.labels):
             raise ValueError(
