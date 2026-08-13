@@ -9,6 +9,7 @@ import pytest
 import rasterio
 import torch
 import torch.nn as nn
+import json
 
 from terratorch.models.utils import TemporalWrapper
 from terratorch.tasks.embedding_generation import EmbeddingGenerationTask
@@ -51,7 +52,7 @@ def test_predict_step_non_temporal(tmp_path):
 
     cfg = tmp_path / "configuration_summary.json"
     assert cfg.exists()
-    import json
+
     with open(cfg, "r") as f:
         cfgj = json.load(f)
     assert cfgj["output_format"] == "parquet_joint"
@@ -208,10 +209,10 @@ def test_infer_bt_tensor_and_dict(mock_backbone_registry):
     task = EmbeddingGenerationTask(model_args={"backbone": "dummy"})
 
     x = torch.randn(2, 3, 224, 224)
-    assert task.infer_BT(x) == (2, 1)
+    assert task.infer_bt(x) == (2, 1)
 
     x_dict = {"optical": torch.randn(2, 3, 4, 224, 224)}
-    assert task.infer_BT(x_dict) == (2, 4)
+    assert task.infer_bt(x_dict) == (2, 4)
 
 
 def test_check_file_ids_valid_and_errors(mock_backbone_registry):
@@ -280,7 +281,6 @@ def test_save_configuration_summary_writes_file(tmp_path, mock_backbone_registry
     out_file = tmp_path / "configuration_summary.json"
     assert out_file.exists()
 
-    import json
     cfg = json.loads(out_file.read_text())
 
     assert cfg["backbone"] == "dummy_backbone"
@@ -366,18 +366,12 @@ def test_write_parquet_batch_and_close_parquet(temp_dir, mock_backbone_registry)
         file_ids=["a", "b", "c", "d"],
         metadata={},
         is_temporal=False,
-        dir_path=Path(temp_dir),
+        dir_path=Path(temp_dir) / "layer_00",
     )
+    task.join_parquet_files()
 
-    out = Path(temp_dir) / "embeddings.parquet"
+    out = Path(temp_dir) / "layer_00" / "embeddings.parquet"
     assert out.exists()
-
-    # close resets writer + path
-    assert task._parquet_writer is not None
-    assert task._parquet_path is not None
-    task.close_parquet()
-    assert task._parquet_writer is None
-    assert task._parquet_path is None
 
     df = pd.read_parquet(out)
     assert len(df) == 4

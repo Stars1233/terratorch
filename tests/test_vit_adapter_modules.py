@@ -193,9 +193,12 @@ def test_injector_with_checkpoint(device):
 
 # ---- Tests for InteractionBlock ----
 
-def _make_vit_blocks(dim, num=2):
+def _make_vit_blocks(dim, num=2, device=None):
     # Use timm Block expecting (B,N,C)
-    return [TimmBlock(dim=dim, num_heads=2, mlp_ratio=2.0) for _ in range(num)]
+    blocks = [TimmBlock(dim=dim, num_heads=2, mlp_ratio=2.0) for _ in range(num)]
+    if device is not None:
+        blocks = [blk.to(device) for blk in blocks]
+    return blocks
 
 
 def test_interaction_block_basic(device):
@@ -206,7 +209,7 @@ def test_interaction_block_basic(device):
     x = torch.randn(2, 21, dim, device=device)
     c = torch.randn(2, 21, dim, device=device)
     deform1, deform2 = deform_inputs(torch.randn(2, dim, 64, 64, device=device))
-    blocks = _make_vit_blocks(dim, num=2)
+    blocks = _make_vit_blocks(dim, num=2, device=device)
     out_x, out_c = ib(x, c, blocks, deform1, deform2, H=2, W=2)
     assert out_x.shape == x.shape and out_c.shape == c.shape
 
@@ -219,7 +222,7 @@ def test_interaction_block_with_extra_extractors(device):
     x = torch.randn(2, 21, dim, device=device)
     c = torch.randn(2, 21, dim, device=device)
     deform1, deform2 = deform_inputs(torch.randn(2, dim, 64, 64, device=device))
-    blocks = _make_vit_blocks(dim, num=3)
+    blocks = _make_vit_blocks(dim, num=3, device=device)
     out_x, out_c = ib(x, c, blocks, deform1, deform2, H=2, W=2)
     assert out_c.shape == c.shape
 
@@ -233,7 +236,7 @@ def test_interaction_block_checkpoint_paths(device):
     x = torch.randn(2, 21, dim, device=device, requires_grad=True)
     c = torch.randn(2, 21, dim, device=device, requires_grad=True)
     deform1, deform2 = deform_inputs(torch.randn(2, dim, 64, 64, device=device))
-    blocks = _make_vit_blocks(dim, num=1)
+    blocks = _make_vit_blocks(dim, num=1, device=device)
     out_x, out_c = ib(x, c, blocks, deform1, deform2, H=2, W=2)
     (out_x.mean() + out_c.mean()).backward()
     assert x.grad is not None and c.grad is not None

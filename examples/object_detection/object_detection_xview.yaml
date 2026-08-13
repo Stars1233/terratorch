@@ -1,0 +1,165 @@
+# xView Object Detection Config
+# Uses GenericNonGeoObjectDetectionDataModule with preprocessed xView chips
+
+seed_everything: 42
+
+trainer:
+  accelerator: auto
+  strategy: auto
+  devices: auto
+  num_nodes: 1
+  precision: 16-mixed
+  logger:
+    class_path: TensorBoardLogger
+    init_args:
+      save_dir: .
+      name: xview_od
+  callbacks:
+    - class_path: LearningRateMonitor
+      init_args:
+        logging_interval: epoch
+    - class_path: ModelCheckpoint
+      init_args:
+        dirpath: output/xview/checkpoints
+        mode: max
+        monitor: val_map
+        filename: best-{epoch:02d}
+        save_on_train_epoch_end: true
+        every_n_epochs: 1
+        save_top_k: 3
+  max_epochs: 50
+  check_val_every_n_epoch: 5
+  log_every_n_steps: 50
+  enable_checkpointing: true
+  default_root_dir: .
+
+data:
+  class_path: terratorch.datamodules.GenericNonGeoObjectDetectionDataModule
+  init_args:
+    batch_size: 16
+    num_workers: 8
+    num_classes: 62
+    train_data_root: /dccstor/geofm-datasets/datasets/xview_segmentation/train_chips
+    train_label_data_root: /dccstor/geofm-datasets/datasets/xview_segmentation/train_labels
+    train_split: /dccstor/geofm-datasets/datasets/xview_segmentation/splits/train.txt
+    val_data_root: /dccstor/geofm-datasets/datasets/xview_segmentation/val_chips
+    val_label_data_root: /dccstor/geofm-datasets/datasets/xview_segmentation/val_labels
+    val_split: /dccstor/geofm-datasets/datasets/xview_segmentation/splits/val.txt
+    img_grep: "*.tif"
+    label_grep: "*.json"
+    constant_scale: 1.0
+    train_transform:
+      - class_path: albumentations.Compose
+        init_args:
+          transforms:
+            - class_path: albumentations.HorizontalFlip
+              init_args:
+                p: 0.5
+            - class_path: albumentations.VerticalFlip
+              init_args:
+                p: 0.5
+            - class_path: albumentations.pytorch.transforms.ToTensorV2
+          bbox_params:
+            format: pascal_voc
+            label_fields:
+              - labels
+    val_transform:
+      - class_path: albumentations.pytorch.transforms.ToTensorV2
+    test_transform:
+      - class_path: albumentations.pytorch.transforms.ToTensorV2
+    class_names:
+      - background
+      - fixed_wing_aircraft
+      - small_aircraft
+      - cargo_plane
+      - military_aircraft
+      - passenger_vehicle
+      - small_car
+      - bus
+      - pickup_truck
+      - utility_truck
+      - truck
+      - cargo_truck
+      - street_vendor
+      - bicycle
+      - motorbike
+      - motorcycle
+      - racing_car
+      - ambulance
+      - fire_engine
+      - police_car
+      - dump_truck
+      - cement_truck
+      - flatbed_truck
+      - tank
+      - construction_vehicle
+      - road_roller
+      - hut
+      - tent
+      - shed
+      - building
+      - aircraft_hangar
+      - damaged_building
+      - facility
+      - construction_site
+      - vehicle_lot
+      - helipad
+      - missile_site
+      - seafaring_vessel
+      - tugboat
+      - barge
+      - fishing_vessel
+      - ferry
+      - yacht
+      - container_ship
+      - oil_tanker
+      - launch
+      - mobile_home
+      - rv
+      - parking_lot
+      - tennis_court
+      - basketball_court
+      - fountain
+      - zoo
+      - bridge
+      - power_station
+      - stadium
+      - storage_tank
+      - stacked_storage_tank
+      - fuel_storage_facility
+      - shipping_container
+      - shipping_container_lot
+      - pylon
+      - tower
+
+model:
+  class_path: terratorch.tasks.ObjectDetectionTask
+  init_args:
+    model_factory: ObjectDetectionModelFactory
+    model_args:
+      framework: faster-rcnn
+      backbone: resnet50
+      backbone_pretrained: true
+      num_classes: 63
+      framework_min_size: 224
+      framework_max_size: 224
+      backbone_modalities:
+        - RGB
+      in_channels: 3
+      necks:
+        - name: FeaturePyramidNetworkNeck
+    freeze_backbone: false
+    freeze_decoder: false
+
+optimizer:
+  class_path: torch.optim.SGD
+  init_args:
+    lr: 0.005
+    momentum: 0.9
+    weight_decay: 0.0005
+
+lr_scheduler:
+  class_path: torch.optim.lr_scheduler.StepLR
+  init_args:
+    step_size: 30
+    gamma: 0.1

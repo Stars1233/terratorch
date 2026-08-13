@@ -15,10 +15,11 @@ from terratorch.datasets.utils import (
     default_transform,
     validate_bands,
 )
-import pdb
+
 
 class MSACropTypeNonGeo(NonGeoDataset):
     """NonGeo dataset implementation for [M-SA-Crop-Type](https://github.com/ServiceNow/geo-bench?tab=readme-ov-file)."""
+
     all_band_names = (
         "COASTAL_AEROSOL",
         "BLUE",
@@ -129,7 +130,8 @@ class MSACropTypeNonGeo(NonGeoDataset):
 
         image = sample["image"]
         mask = sample["mask"].numpy()
-        if (len(mask.shape) == 3) & (mask.shape[0] == 1): mask = mask[0] 
+        if (len(mask.shape) == 3) & (mask.shape[0] == 1):
+            mask = mask[0]
 
         if torch.is_tensor(image):
             image = image.permute(1, 2, 0).numpy()

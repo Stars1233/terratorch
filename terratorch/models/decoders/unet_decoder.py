@@ -45,7 +45,4 @@ class UNetDecoder(nn.Module):
     def forward(self, x: list[torch.Tensor]) -> torch.Tensor:
         # The first layer is ignored in the original UnetDecoder, so we need to duplicate the first layer
         x = [x[0].clone(), *x]
-        if torch.mps.is_available():
-            # Fix issue on MacBooks, see https://github.com/terrastackai/terratorch/issues/859
-            x = [e.contiguous() for e in x]
         return self.decoder(x)

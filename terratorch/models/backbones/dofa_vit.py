@@ -1,10 +1,6 @@
 # reference torchgeo https://torchgeo.readthedocs.io/en/latest/_modules/torchgeo/models/dofa.html#DOFA
-import torch
-import torch.nn.functional as F
-import torchgeo.models.dofa as dofa
 import logging
 import math
-import pdb
 from collections.abc import Callable
 from functools import partial
 from typing import List

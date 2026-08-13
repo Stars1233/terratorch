@@ -84,7 +84,6 @@ def test_create_pixelwise_model(backbone, task, expected, decoder, model_factory
         model_args["num_classes"] = NUM_CLASSES
     if decoder == "UperNetDecoder":
         model_args["backbone_out_indices"] = [1, 2, 3, 4]
-        model_args["decoder_scale_modules"] = True
 
     model = model_factory.build_model(**model_args)
     model.eval()
@@ -112,7 +111,6 @@ def test_create_pixelwise_model_no_in_channels(
         model_args["num_classes"] = NUM_CLASSES
     if decoder == "UperNetDecoder":
         model_args["backbone_out_indices"] = [1, 2, 3, 4]
-        model_args["decoder_scale_modules"] = True
 
     model = model_factory.build_model(**model_args)
     model.eval()
@@ -143,7 +141,6 @@ def test_create_pixelwise_model_with_aux_heads(
 
     if decoder == "UperNetDecoder":
         model_args["backbone_out_indices"] = [1, 2, 3, 4]
-        model_args["decoder_scale_modules"] = True
 
     model = model_factory.build_model(**model_args)
     model.eval()
@@ -175,7 +172,6 @@ def test_create_pixelwise_model_with_extra_bands(backbone, task, expected, decod
 
     if decoder == "UperNetDecoder":
         model_args["backbone_out_indices"] = [1, 2, 3, 4]
-        model_args["decoder_scale_modules"] = True
     model = model_factory.build_model(**model_args)
     model.eval()
     model_input = torch.ones((1, NUM_CHANNELS + 1, 224, 224))

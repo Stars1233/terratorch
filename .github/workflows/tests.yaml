@@ -27,6 +27,9 @@ on:
       - '**/*.txt'
       - '**/*.ipynb'
       - 'integrationtests/**/*'
+  workflow_dispatch:
+  schedule:
+    - cron: '0 3 * * *'
 jobs:
   build:
     environment: cicd
@@ -37,6 +40,10 @@ jobs:
         python-version: ["3.13"]
     env:
       R_TESTS_VERBOSE: 2
+      OMP_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      NUMEXPR_NUM_THREADS: "1"
     steps:
       - name: Clone repo
         uses: actions/checkout@v5
@@ -52,6 +59,67 @@ jobs:
           pip install -e .[test]
       - name: List pip dependencies
         run: pip list
-      - name: Test with pytest
+      - name: Test with pytest (fast)
         run: |
-          pytest -s -v tests
+          pytest -s -v -m "not slow" tests
+
+  slow-tests:
+    if: github.event_name != 'pull_request'
+    environment: cicd
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      matrix:
+        python-version: ["3.13"]
+    env:
+      R_TESTS_VERBOSE: 2
+      OMP_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      NUMEXPR_NUM_THREADS: "1"
+    steps:
+      - name: Clone repo
+        uses: actions/checkout@v5
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+      - name: Install dependencies
+        run: |
+          pip install pip==25.1
+          pip --version
+          pip install -e .[test]
+      - name: Test with pytest (slow)
+        run: |
+          pytest -s -v -m "slow" tests
+
+  rfdetr-tests:
+    environment: cicd
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      matrix:
+        python-version: ["3.13"]
+    env:
+      R_TESTS_VERBOSE: 2
+      OMP_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      NUMEXPR_NUM_THREADS: "1"
+    steps:
+      - name: Clone repo
+        uses: actions/checkout@v5
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+      - name: Install dependencies
+        run: |
+          pip install pip==25.1
+          pip --version
+          pip install -e .[test,rfdetr]
+      - name: Test RF-DETR integration
+        run: |
+          pytest -s -v tests/test_detr.py -k "rfdetr"

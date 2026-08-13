@@ -17,15 +17,15 @@
 
 [![huggingface](https://img.shields.io/badge/Hugging_Face-join-FFD21E?logo=huggingface)](https://huggingface.co/ibm-nasa-geospatial)
 [![pypi](https://badge.fury.io/py/terratorch.svg)](https://pypi.org/project/terratorch)
-[![tests](https://github.com/terrastackai/terratorch/actions/workflows/test.yaml/badge.svg)](https://github.com/terrastackai/terratorch/actions/workflows/test.yaml)
-[![MkDocs](https://img.shields.io/badge/MkDocs-526CFE?logo=materialformkdocs&logoColor=fff)](https://terrastackai.github.io/terratorch/)
+[![tests](https://github.com/torchgeo/terratorch/actions/workflows/tests.yaml/badge.svg)](https://github.com/torchgeo/terratorch/actions/workflows/tests.yaml)
+[![MkDocs](https://img.shields.io/badge/MkDocs-526CFE?logo=materialformkdocs&logoColor=fff)](https://torchgeo.github.io/terratorch/)
 <!--
-![cov](https://github.com/terrastackai/terratorch/raw/main/assets/coverage-badge.svg)
+![cov](https://github.com/torchgeo/terratorch/raw/main/assets/coverage-badge.svg)
 -->
 [![PyPI Downloads](https://img.shields.io/pypi/dm/terratorch.svg?label=PyPI%20downloads)](https://pypi.org/project/terratorch/)
 [![Conda Downloads](https://img.shields.io/conda/dn/conda-forge/terratorch.svg?label=Conda%20downloads)](https://anaconda.org/conda-forge/terratorch)
 
-Please, read the contribution guidelines (see `Contribution` below) if you want to contribute to
+Please read the contribution guidelines (see `Contribution` below) if you want to contribute to
 TerraTorch.
 
 ## Overview
@@ -80,8 +80,8 @@ In order to use the file `pyproject.toml` it is necessary to guarantee `pip>=21.
 
 For a stable point-release, use `pip install terratorch==<version>`.
 
-[comment]: <If you prefer to get the most recent version of the main branch, install the library with `pip install git+https://github.com/terrastackai/terratorch.git`.>
-To get the most recent version of the branch `main`, install the library with `pip install git+https://github.com/terrastackai/terratorch.git`.
+[comment]: <If you prefer to get the most recent version of the main branch, install the library with `pip install git+https://github.com/torchgeo/terratorch.git`.>
+To get the most recent version of the branch `main`, install the library with `pip install git+https://github.com/torchgeo/terratorch.git`.
 
 ### Conda
 TerraTorch is also available on `conda-forge`, to install from there do `conda install -c conda-forge terratorch`. 
@@ -94,21 +94,67 @@ TerraTorch requires gdal to be installed, which can be quite a complex process.
 If you don't have GDAL set up on your system, we recommend using a conda
 environment and installing it with `conda install -c conda-forge gdal`. If you
 are installing from `conda-forge` it probably won't be a problem. 
+### Optional Dependencies
+
+#### RF-DETR
+RF-DETR integration is optional and depends on the upstream `rfdetr` package.
+
+Install optional RF-DETR support with:
+```bash
+pip install terratorch[rfdetr]
+```
+
+For contributors using editable installs:
+```bash
+pip install -e .[test,rfdetr]
+```
+
+#### Deformable DETR
+Some advanced object detection tests use the Deformable DETR variant, 
+which requires compiling CUDA operators for `MultiScaleDeformableAttention`.
+
+**Note:** Core DETR functionality works without this extension. 
+Deformable DETR tests will be gracefully skipped if the operators are not compiled.
+
+To enable Deformable DETR support, compile the CUDA operators:
+```bash
+git clone https://github.com/fundamentalvision/Deformable-DETR.git
+cd Deformable-DETR/models/ops
+sh make.sh
+```
+
+**Requirements:** Linux, CUDA ≥ 9.2, GCC ≥ 5.4
 
 ### Install as a developer
 To install as a developer (e.g. to extend the library):
 ```
-git clone https://github.com/terrastackai/terratorch.git
+git clone https://github.com/torchgeo/terratorch.git
 cd terratorch
 pip install -e .[test]
 ```
-To install terratorch with partial (work in development) support for Weather Foundation Models, `pip install -e .[wxc]`, which currently works just for `Python >= 3.11`. 
+
+### Optional Dependencies
+
+TerraTorch supports several optional features that can be installed separately:
+
+- **VLLM support**: `pip install terratorch[vllm]`
+- **Weather Foundation Models**: `pip install terratorch[wxc]` (Python >= 3.11 only)
+- **PEFT (Parameter-Efficient Fine-Tuning)**: `pip install terratorch[peft]`
+- **Visualization tools**: `pip install terratorch[visualize]`
+- **GeoBench v2**: `pip install terratorch[geobenchv2]`
+- **Logging with Weights & Biases**: `pip install terratorch[logging]`
+- **MMSegmentation support**: `pip install terratorch[mmseg]`
+- **Surya support**: `pip install terratorch[surya]`
+- **Tortilla file support**: `pip install terratorch[tortilla]` - Required for loading datasets from tortilla files
+
+You can install multiple optional dependencies at once: `pip install terratorch[vllm,peft,logging]`
 
 ## Documentation
 
-To get started, check out the [quick start guide](https://terrastackai.github.io/terratorch/quick_start).
+To get started, check out the [quick start guide](https://torchgeo.github.io/terratorch/quick_start).
 
-Developers, check out the [architecture overview](https://terrastackai.github.io/terratorch/architecture).
+Developers, check out the [architecture overview](https://torchgeo.github.io/terratorch/architecture).
+
 
 [TerraTorch: The Geospatial Foundation Models Toolkit on arXiv](https://arxiv.org/abs/2503.20563)
 ## Contributing
@@ -116,11 +162,11 @@ Developers, check out the [architecture overview](https://terrastackai.github.io
 This project welcomes contributions and suggestions. Ways to contribute or get involved:
 
 - Join our [Discord](https://discord.gg/vQXTNmrkTM)
-- Create an [Issue](https://github.com/terrastackai/terratorch/issues) (for bugs or feature requests)
-- Contribute via [PR](https://github.com/terrastackai/terratorch/pulls)
+- Create an [Issue](https://github.com/torchgeo/terratorch/issues) (for bugs or feature requests)
+- Contribute via [PR](https://github.com/torchgeo/terratorch/pulls)
 - Join our [duoweekly](https://romeokienzler.medium.com/the-duoweekly-manifesto-eaa6c1f542c8) community calls taking place [Tuesdays 4:30 PM - 5 PM CEST](https://teams.microsoft.com/l/meetup-join/19%3ameeting_MWJhMThhMTMtMjc3MS00YjAyLWI3NTMtYTI0NDQ3NWY3ZGU2%40thread.v2/0?context=%7b%22Tid%22%3a%22fcf67057-50c9-4ad4-98f3-ffca64add9e9%22%2c%22Oid%22%3a%227f7ab87a-680c-4c93-acc5-fbd7ec80823a%22%7d) and [Thursdays 2:30 PM - 3 PM CEST](https://teams.microsoft.com/l/meetup-join/19%3ameeting_MWJhMThhMTMtMjc3MS00YjAyLWI3NTMtYTI0NDQ3NWY3ZGU2%40thread.v2/0?context=%7b%22Tid%22%3a%22fcf67057-50c9-4ad4-98f3-ffca64add9e9%22%2c%22Oid%22%3a%227f7ab87a-680c-4c93-acc5-fbd7ec80823a%22%7d).
 
-You can find more detailed contribution guidelines [here](https://terrastackai.github.io/terratorch/stable/contributing/). 
+You can find more detailed contribution guidelines [here](https://torchgeo.github.io/terratorch/stable/contributing/). 
 
 If you want to meet the GitHub DCO checks, you **need** to do your commits as below:
 ```

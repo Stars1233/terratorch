@@ -1,5 +1,4 @@
 import math
-import pdb
 import warnings
 from abc import ABC, abstractmethod
 from collections import OrderedDict
@@ -42,7 +41,6 @@ class NeckSequential(nn.Sequential):
         return x
 
 
-
 @TERRATORCH_NECK_REGISTRY.register
 class SelectIndices(Neck):
     def __init__(self, channel_list: list[int], indices: list[int]):
@@ -72,6 +70,7 @@ class AggregateTokens(Neck):
         indices: int | list[int] | None = None,
         index: int | None = -1,  # deprecated,
         drop_cls: bool = False,
+        temporal_inputs: bool = False,
     ):
         """Aggregate tokens/patch embeddings to a single embedding per layer. Mainly used for classification models.
 
@@ -81,16 +80,18 @@ class AggregateTokens(Neck):
             index (int): Deprecated. Select the layer index if multiple outputs are provided. Defaults to -1.
             drop_cls (bool): Whether to drop first token for pooling methods ("mean", "min", "max").
                 Intended for ViT-style backbones with a CLS token. Defaults to False.
+            temporal_inputs (bool, optional): Used for embedding generation workflows, flag to handle temporal data correctly.
         """
         super().__init__(channel_list)
 
-        self.indices = indices or index # If indices is not set, use deprecated index, which defaults to -1.
-        if isinstance(self.indices, int): # Wrap int index/ indices to be list.
+        self.indices = indices or index  # If indices is not set, use deprecated index, which defaults to -1.
+        if isinstance(self.indices, int):  # Wrap int index/ indices to be list.
             self.indices = [self.indices]
 
         self.pooling = pooling.lower()
         self.latent_dim = [channel_list[i] for i in self.indices]
         self.drop_cls = drop_cls
+        self.temporal_inputs = temporal_inputs
 
         if self.drop_cls and self.pooling == "cls":
             raise ValueError("drop_cls=True is incompatible with pooling='cls'.")
@@ -101,34 +102,45 @@ class AggregateTokens(Neck):
         for i, index in enumerate(self.indices):
             feat = features[index] if len(features) > 1 else features[0]
 
-            if feat.dim() == 3:
-                # Assuming spatial grid, flattening spatial dimension
-                B  = feat.shape[0]
-                feat = feat.reshape(B, -1, self.latent_dim[i])
+            if self.temporal_inputs:
+                # used for inputs with a separate time dim
+                timesteps = feat.shape[1]  # shape is (B, T, ...), flatten time dim into B
+                feat = rearrange(feat, "b t ... -> (b t) ...")
 
-            elif feat.dim() == 5:
+            if feat.dim() == 4:
+                # Assuming spatial grid, flattening spatial dimension
+                B, C, H, W = feat.shape
+                feat = rearrange(feat, "b c h w -> b (h w) c")
+
+            elif (
+                feat.dim() == 5
+            ):  # This is fallback for self.temporal_inputs not set, but we know that it is temporal shape
                 # Assuming spatiotemporal grid, flattening spatial dimension
-                B = feat.shape[0]
-                T = feat.shape[2]
-                feat = feat.reshape(B, -1, T, self.latent_dim[i])
+                B, C, T, H, W = feat.shape
+                feat = rearrange(feat, "b c t h w -> b (h w) t c")
 
             if self.drop_cls:
                 feat = feat[..., 1:, :]
 
             if isinstance(self.pooling, int):
                 # Select token index
-                aggregated_features.append(feat[..., self.pooling, :])
+                feat_aggregated = feat[..., self.pooling, :]
             elif self.pooling == "cls":
                 # Assuming CLS token is on first position
-                aggregated_features.append(feat[..., 0, :])
+                feat_aggregated = feat[..., 0, :]
             elif self.pooling == "mean":
-                aggregated_features.append(feat.mean(dim=1))
+                feat_aggregated = feat.mean(dim=1)
             elif self.pooling == "max":
-                aggregated_features.append(feat.max(dim=1).values)
+                feat_aggregated = feat.max(dim=1).values
             elif self.pooling == "min":
-                aggregated_features.append(feat.min(dim=1).values)
+                feat_aggregated = feat.min(dim=1).values
             else:
                 raise ValueError(f"Pooling method {self.pooling} not recognized.")
+
+            if self.temporal_inputs:
+                # unflatten back to (B, T, ..)
+                feat_aggregated = rearrange(feat_aggregated, "(b t) ... -> b t ...", t=timesteps)
+            aggregated_features.append(feat_aggregated)
 
         return aggregated_features
 
@@ -211,7 +223,12 @@ class MaxpoolToPyramidal(Neck):
 @TERRATORCH_NECK_REGISTRY.register
 class ReshapeTokensToImage(Neck):
     def __init__(
-        self, channel_list: list[int], remove_cls_token=True, effective_time_dim: int = 1, h: int | None = None
+        self,
+        channel_list: list[int],
+        remove_cls_token=True,
+        effective_time_dim: int = 1,
+        h: int | None = None,
+        temporal_inputs: bool = False,
     ):
         """Reshape output of transformer encoder so it can be passed to a conv net.
 
@@ -232,15 +249,21 @@ class ReshapeTokensToImage(Neck):
             h (int | None):
                 You can choose a value for the height of the reshaped image.
                 The embedding size will be implicitly discovered from it.
+            temporal_inputs (bool, optional): Used for embedding generation workflows, flag to handle temporal data correctly.
         """
         super().__init__(channel_list)
         self.remove_cls_token = remove_cls_token
         self.effective_time_dim = effective_time_dim
         self.h = h
+        self.temporal_inputs = temporal_inputs
 
     def forward(self, features: list[torch.Tensor], image_size=None, **kwargs) -> list[torch.Tensor]:
         out = []
         for x in features:
+            if self.temporal_inputs:
+                # used for inputs with a separate time dim, effective_time_dim is used for inputs concatenated along channel dim
+                timesteps = x.shape[1]  # shape is (B, T, ...), flatten time dim into B
+                x = rearrange(x, "b t ... -> (b t) ...")
             if x.dim() >= 4:
                 out.append(x)
                 continue
@@ -262,14 +285,19 @@ class ReshapeTokensToImage(Neck):
                     patch_size = (np.prod(image_size) / tokens_per_timestep) ** 0.5
                     if patch_size % 1:
                         if self.remove_cls_token:
-                            warnings.warn(f"Cannot infer grid shape from input tokens ({x.shape[1]}), assuming a cls_token "
-                                          f"(default setting). Retry ReshapeTokensToImage with remove_cls_token to False. "
-                                          "Silence this warning with remove_cls_token=False for neck ReshapeTokensToImage.")
+                            warnings.warn(
+                                f"Cannot infer grid shape from input tokens ({x.shape[1]}), assuming a cls_token "
+                                f"(default setting). Retry ReshapeTokensToImage with remove_cls_token to False. "
+                                "Silence this warning with remove_cls_token=False for neck ReshapeTokensToImage."
+                            )
                             self.remove_cls_token = False
                             return self.forward(features, image_size, **kwargs)
                         else:
-                            raise ValueError(f"Cannot infer grid shape from from input tokens ({x.shape[1]}) with "
-                                             f"image_size = {image_size} in neck ReshapeTokensToImage. ")
+                            raise ValueError(
+                                f"Cannot infer grid shape from from input tokens ({x.shape[1]}) with "
+                                f"image_size = {image_size} in neck ReshapeTokensToImage. "
+                            )
+                    img_h, _ = image_size
                     h = int(img_h // patch_size)
 
                 encoded = rearrange(
@@ -279,6 +307,10 @@ class ReshapeTokensToImage(Neck):
                     t=self.effective_time_dim,
                     h=h,
                 )
+
+                if self.temporal_inputs:
+                    # unflatten back to (B, T, C, H, W)
+                    encoded = rearrange(encoded, "(b t) c h w -> b t c h w", t=timesteps)
 
                 out.append(encoded)
         return out
@@ -330,7 +362,17 @@ class LearnedInterpolateToPyramidal(Neck):
         self.fpn4 = nn.Sequential(nn.MaxPool2d(kernel_size=2, stride=2))
         self.embedding_dim = [channel_list[0] // 4, channel_list[1] // 2, channel_list[2], channel_list[3]]
 
+        if torch.mps.is_available():
+            warnings.warn(
+                "MPS backend: enforcing .contiguous() to avoid non‑contiguous tensor issues "
+                "on M‑series chips; may cause extra copies and slower execution."
+            )
+
     def forward(self, features: list[torch.Tensor], **kwargs) -> list[torch.Tensor]:
+        if torch.mps.is_available():
+            # Fix issue on MacBooks
+            features = [f.contiguous() for f in features]
+
         scaled_inputs = []
         scaled_inputs.append(self.fpn1(features[0]))
         scaled_inputs.append(self.fpn2(features[1]))

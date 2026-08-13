@@ -4,9 +4,15 @@ import logging
 
 from terratorch.datamodules.era5 import ERA5DataModule
 from terratorch.datamodules.fire_scars import FireScarsNonGeoDataModule
+from terratorch.datamodules.generic_nongeo_od_data_module import (
+    GenericNonGeoObjectDetectionDataModule,
+)
 from terratorch.datamodules.generic_pixel_wise_data_module import (
     GenericNonGeoPixelwiseRegressionDataModule,
     GenericNonGeoSegmentationDataModule,
+)
+from terratorch.datamodules.embedding_classification_data_module import (
+    EmbeddingClassificationDataModule,
 )
 from terratorch.datamodules.generic_scalar_label_data_module import (
     GenericNonGeoClassificationDataModule,
@@ -50,6 +56,7 @@ from terratorch.datamodules.landslide4sense import Landslide4SenseNonGeoDataModu
 from terratorch.datamodules.openearthmap import OpenEarthMapNonGeoDataModule
 from terratorch.datamodules.sen1floods11 import Sen1Floods11NonGeoDataModule
 from terratorch.datamodules.sen4agrinet import Sen4AgriNetDataModule
+from terratorch.datamodules.tiled_datamodule_wrapper import TilingDataModuleWrapper
 from terratorch.datamodules.torchgeo_data_module import TorchGeoDataModule, TorchNonGeoDataModule
 
 try:
@@ -76,22 +83,25 @@ try:
 except ImportError:
     pass
 
-__all__ = (
+__all__ = [
+    "EmbeddingClassificationDataModule",
     "GenericNonGeoSegmentationDataModule",
     "GenericNonGeoPixelwiseRegressionDataModule",
-    "GenericNonGeoSegmentationDataModule",
     "GenericNonGeoClassificationDataModule",
+    "GenericNonGeoObjectDetectionDataModule",
     # "GenericNonGeoRegressionDataModule",
     "BurnIntensityNonGeoDataModule",
     "CarbonFluxNonGeoDataModule",
     "Landslide4SenseNonGeoDataModule",
     "ForestNetNonGeoDataModule",
-    "BioMasstersNonGeoDataModuleSen1Floods11NonGeoDataModule",
+    "BioMasstersNonGeoDataModule",
+    "Sen1Floods11NonGeoDataModule",
     "Sen4MapLucasDataModule",
     "FireScarsNonGeoDataModule",
     "MultiTemporalCropClassificationDataModule",
     "TorchGeoDataModule",
     "TorchNonGeoDataModule",
+    "TilingDataModuleWrapper",
     "MEuroSATNonGeoDataModule",
     "MBigEarthNonGeoDataModule",
     "MBrickKilnNonGeoDataModule",
@@ -104,24 +114,25 @@ __all__ = (
     "MPv4gerSegNonGeoDataModule",
     "MSACropTypeNonGeoDataModule",
     "MNeonTreeNonGeoDataModule",
-    "OpenEarthMapModuleOpenSentinelMapDataModule",
+    "OpenEarthMapNonGeoDataModule",
+    "OpenSentinelMapDataModule",
     "PASTISDataModule",
     "Sen4AgriNetDataModule",
     "GenericMultiModalDataModule",
     "mVHR10DataModule",
     "SubstationDataModule",
     "HelioNetCDFDataModule",
-)
+]
 
 if wxc_present:
-    __all__.__add__(("Merra2DownscaleNonGeoDataModule",))
+    __all__.append("Merra2DownscaleNonGeoDataModule")
 
 
 if geobench_v2_present:
-    __all__.__add__(
-        (
-            "GeoBenchV2SegmentationDataModule",
-            "GeoBenchV2ObjectDetectionDataModule",
+    __all__.extend(
+        [
             "GeoBenchV2ClassificationDataModule",
-        )
+            "GeoBenchV2ObjectDetectionDataModule",
+            "GeoBenchV2SegmentationDataModule",
+        ]
     )

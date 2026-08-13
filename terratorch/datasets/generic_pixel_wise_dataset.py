@@ -5,28 +5,44 @@
 
 import glob
 import os
+import warnings
 from abc import ABC
+from collections.abc import Hashable
 from pathlib import Path
-from typing import Any, Hashable
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    try:
+        from tacoreader.dataset import TacoDataset
+    except ImportError:
+        TacoDataset = Any  # type: ignore[assignment,misc]
 
 import albumentations as A
 import matplotlib as mpl
 import numpy as np
-import rioxarray
-import xarray as xr
 import pandas as pd
+import rioxarray
+import torch
+import xarray as xr
 from einops import rearrange
 from matplotlib import pyplot as plt
 from matplotlib.figure import Figure
 from matplotlib.patches import Rectangle
-import torch
+from rasterio.errors import NotGeoreferencedWarning
 from torch import Tensor
 from torchgeo.datasets import NonGeoDataset
-import warnings
-from rasterio.errors import NotGeoreferencedWarning
 
-from terratorch.datasets.utils import HLSBands, default_transform, filter_valid_files, generate_bands_intervals
-from terratorch.datasets.utils import to_rgb, to_pca_rgb, resize_hwc
+from terratorch.datasets.utils import (
+    HLSBands,
+    default_transform,
+    extract_georeference,
+    filter_valid_files,
+    generate_bands_intervals,
+    resize_hwc,
+    to_pca_rgb,
+    to_rgb,
+)
+
 
 class GenericPixelWiseDataset(NonGeoDataset, ABC):
     """
@@ -55,8 +71,9 @@ class GenericPixelWiseDataset(NonGeoDataset, ABC):
         expand_temporal_dimension: bool = False,
         temporal_channel_major: bool = False,
         reduce_zero_label: bool = False,
-        tortilla_df: pd.DataFrame | None = None,
+        tortilla_df: "pd.DataFrame | TacoDataset | None" = None,
         tortilla_indices: list[Hashable] | None = None,
+        return_georeference: bool = False,
     ) -> None:
         """Constructor
 
@@ -97,10 +114,19 @@ class GenericPixelWiseDataset(NonGeoDataset, ABC):
             temporal_channel_major: Used for expand_temporal_dimension, set True if bands are grouped by channel (all timesteps of one band are stacked together).
             reduce_zero_label (bool): Subtract 1 from all labels. Useful when labels start from 1 instead of the
                 expected 0. Defaults to False.
-            tortilla_df (tortilla.DataFrame | None): Tortilla DataFrame to use for loading data. Defaults to None. If provided, data_root is ignored.
+            tortilla_df (pd.DataFrame | TacoDataset | None): Tortilla DataFrame (tacoreader v1) or
+                TacoDataset (tacoreader v2) to use for loading data. Defaults to None.
+                If provided, data_root is ignored.
             tortilla_indices (list[Hashable] | None): List of indices to use from tortilla_df. Defaults to None, which uses all indices.
+            return_georeference (bool): Whether to return georeference metadata info (CRS, Bounds, ...). Defaults to False.
         """
         super().__init__()
+
+        # Resolve TacoDataset once for all v2 isinstance checks below
+        try:
+            from tacoreader.dataset import TacoDataset as _TacoDataset
+        except ImportError:
+            _TacoDataset = None  # type: ignore[assignment]
 
         self.split_file = split
 
@@ -112,6 +138,7 @@ class GenericPixelWiseDataset(NonGeoDataset, ABC):
         self.reduce_zero_label = reduce_zero_label
         self.expand_temporal_dimension = expand_temporal_dimension
         self.temporal_channel_major = temporal_channel_major
+        self.return_georeference = return_georeference
 
         if self.expand_temporal_dimension:
             if not self.temporal_channel_major:
@@ -120,16 +147,20 @@ class GenericPixelWiseDataset(NonGeoDataset, ABC):
                     "(all bands of one timestep are stacked together). "
                     "If instead bands are grouped by channel "
                     "(all timesteps of one band are stacked together), "
-                    "set temporal_channel_major=True.")
+                    "set temporal_channel_major=True."
+                )
 
             if dataset_bands is None:
-                raise ValueError(
-                    "Please provide dataset_bands when expand_temporal_dimension=True."
-                )
+                raise ValueError("Please provide dataset_bands when expand_temporal_dimension=True.")
 
         self.tortilla_df = tortilla_df
         if tortilla_indices is None and self.tortilla_df is not None:
-            self.tortilla_indices = self.tortilla_df.index.tolist()
+            # v2 TacoDataset: use row count from materialised data
+            if _TacoDataset is not None and isinstance(self.tortilla_df, _TacoDataset):
+                self.tortilla_indices = list(range(len(self.tortilla_df.data)))
+            else:
+                # v1 TortillaDataFrame (pandas DataFrame subclass)
+                self.tortilla_indices = self.tortilla_df.index.tolist()
         else:
             self.tortilla_indices = tortilla_indices
 
@@ -142,7 +173,24 @@ class GenericPixelWiseDataset(NonGeoDataset, ABC):
         if self.tortilla_df is not None:
             for sample_index in self.tortilla_indices:
                 sample_data = self.tortilla_df.read(sample_index)
-                if isinstance(sample_data, pd.DataFrame):
+                # v2 TacoDataset: .read() on a FOLDER returns a TacoDataFrame;
+                # .read() on a FILE returns the GDAL VSI path as a str.
+                if _TacoDataset is not None and isinstance(self.tortilla_df, _TacoDataset):
+                    if isinstance(sample_data, str):
+                        # Top-level FILE — treat the single VSI path as the image
+                        self.image_files.append(sample_data)
+                    else:
+                        # FOLDER: iterate child rows (TacoDataFrame backed by PyArrow)
+                        arrow_table = sample_data.to_arrow()
+                        for row in arrow_table.to_pylist():
+                            sample_id = row.get("id", "")
+                            vsi_path = row.get("internal:gdal_vsi")
+                            if sample_id == "image":
+                                self.image_files.append(vsi_path)
+                            elif sample_id == "label":
+                                self.segmentation_mask_files.append(vsi_path)
+                elif isinstance(sample_data, pd.DataFrame):
+                    # v1 TortillaDataFrame child
                     for _, row in sample_data.iterrows():
                         if row.get("tortilla:id") == "image":
                             self.image_files.append(row.get("internal:subfile"))
@@ -179,7 +227,7 @@ class GenericPixelWiseDataset(NonGeoDataset, ABC):
             # we need to provide a way to run the dataloder in these cases.
             if not self.segmentation_mask_files:
                 self.segmentation_mask_files = self.image_files
-                # The masks can be `None` since they won't be used in fact. 
+                # The masks can be `None` since they won't be used in fact.
 
         self.rgb_indices = [0, 1, 2] if rgb_indices is None else rgb_indices
 
@@ -213,7 +261,8 @@ class GenericPixelWiseDataset(NonGeoDataset, ABC):
         return len(self.image_files)
 
     def __getitem__(self, index: int) -> dict[str, Any]:
-        image = self._load_file(self.image_files[index], nan_replace=self.no_data_replace).to_numpy()
+        image, georef = self._load_file(self.image_files[index], nan_replace=self.no_data_replace)
+        image = image.to_numpy()
         # to channels last
         if self.expand_temporal_dimension:
             if self.temporal_channel_major:
@@ -226,8 +275,10 @@ class GenericPixelWiseDataset(NonGeoDataset, ABC):
         output = {
             "image": image.astype(np.float32) * self.constant_scale,
         }
+        if georef:
+            output["metadata"] = georef
         if self.segmentation_mask_files:
-            mask = self._load_file(self.segmentation_mask_files[index], nan_replace=self.no_label_replace)
+            mask, _ = self._load_file(self.segmentation_mask_files[index], nan_replace=self.no_label_replace)
             output["mask"] = mask.to_numpy()[0]
             if self.reduce_zero_label:
                 output["mask"] -= 1
@@ -237,20 +288,23 @@ class GenericPixelWiseDataset(NonGeoDataset, ABC):
 
         return output
 
-    def _load_file(self, path, nan_replace: int | float | None = None) -> xr.DataArray:
-        #warnings.filterwarnings("ignore", category=NotGeoreferencedWarning) #TODO Handle NotGeoreferencedWarning better
+    def _load_file(self, path, nan_replace: int | float | None = None) -> tuple[xr.DataArray, dict | None]:
         data = rioxarray.open_rasterio(path, masked=True)
         if nan_replace is not None:
             data = data.fillna(nan_replace)
-        return data
+        if getattr(self, "return_georeference", False):
+            georef = extract_georeference(path)
+            return data, georef
+        else:
+            return data, None
 
     def plot(
-            self,
-            sample: dict[str, Tensor],
-            suptitle: str | None = None,
-            show_axes: bool = False,
-            embedding_input: bool | None = None,
-            pca_step:int | None = None
+        self,
+        sample: dict[str, Tensor],
+        suptitle: str | None = None,
+        show_axes: bool = False,
+        embedding_input: bool | None = None,
+        pca_step: int | None = None,
     ) -> Figure:
         """Plot a sample from the dataset.
 
@@ -293,14 +347,14 @@ class GenericPixelWiseDataset(NonGeoDataset, ABC):
                 )
                 return  # Plotting requires (reshaped) spatial (C, H, W) input embeddings.
 
-            image_for_plot, H_emb, W_emb = to_pca_rgb(image_chw =image, step=pca_step) # Get 3-channel PCA image
+            image_for_plot, H_emb, W_emb = to_pca_rgb(image_chw=image, step=pca_step)  # Get 3-channel PCA image
             target_h, target_w = label_mask.shape[-2], label_mask.shape[-1]
 
             if (H_emb, W_emb) != (target_h, target_w):
-                image_for_plot = resize_hwc(image_for_plot, (target_h, target_w)) # Resize to target size
+                image_for_plot = resize_hwc(image_for_plot, (target_h, target_w))  # Resize to target size
 
         else:
-            image_for_plot = to_rgb(image_chw = image, rgb_indices = self.rgb_indices)
+            image_for_plot = to_rgb(image_chw=image, rgb_indices=self.rgb_indices)
 
         showing_predictions = "prediction" in sample
         prediction_mask = None
@@ -320,9 +374,10 @@ class GenericPixelWiseDataset(NonGeoDataset, ABC):
             prediction=prediction_mask,
             suptitle=suptitle,
             show_axes=show_axes,
-            embedding_input= embedding_input,
+            embedding_input=embedding_input,
             **kwargs,
         )
+
 
 class GenericNonGeoSegmentationDataset(GenericPixelWiseDataset):
     """GenericNonGeoSegmentationDataset"""
@@ -349,8 +404,9 @@ class GenericNonGeoSegmentationDataset(GenericPixelWiseDataset):
         pca_step: int = 4,
         expand_temporal_dimension: bool = False,
         reduce_zero_label: bool = False,
-        tortilla_df: pd.DataFrame | None = None,
+        tortilla_df: "pd.DataFrame | TacoDataset | None" = None,
         tortilla_indices: list[Hashable] | None = None,
+        return_georeference: bool = False,
     ) -> None:
         """See :class:`GenericPixelWiseDataset` for shared args.
 
@@ -380,6 +436,7 @@ class GenericNonGeoSegmentationDataset(GenericPixelWiseDataset):
             reduce_zero_label=reduce_zero_label,
             tortilla_df=tortilla_df,
             tortilla_indices=tortilla_indices,
+            return_georeference=return_georeference,
         )
         self.num_classes = num_classes
         self.class_names = class_names
@@ -390,9 +447,17 @@ class GenericNonGeoSegmentationDataset(GenericPixelWiseDataset):
             item["mask"] = item["mask"].long()
         return item
 
-
     @staticmethod
-    def _plot_sample(image, label, num_classes: int, prediction=None, suptitle=None, class_names=None, show_axes=False, embedding_input=False):
+    def _plot_sample(
+        image,
+        label,
+        num_classes: int,
+        prediction=None,
+        suptitle=None,
+        class_names=None,
+        show_axes=False,
+        embedding_input=False,
+    ):
         num_images = 5 if prediction is not None else 4
         fig, ax = plt.subplots(1, num_images, figsize=(12, 10), layout="compressed")
         axes_visibility = "on" if show_axes else "off"
@@ -432,6 +497,7 @@ class GenericNonGeoSegmentationDataset(GenericPixelWiseDataset):
             plt.suptitle(suptitle)
         return fig
 
+
 class GenericNonGeoPixelwiseRegressionDataset(GenericPixelWiseDataset):
     """GenericNonGeoPixelwiseRegressionDataset"""
 
@@ -456,8 +522,7 @@ class GenericNonGeoPixelwiseRegressionDataset(GenericPixelWiseDataset):
         expand_temporal_dimension: bool = False,
         reduce_zero_label: bool = False,
     ) -> None:
-        """See :class:`GenericPixelWiseDataset` for args.
-        """
+        """See :class:`GenericPixelWiseDataset` for args."""
         super().__init__(
             data_root,
             label_data_root=label_data_root,
@@ -484,7 +549,6 @@ class GenericNonGeoPixelwiseRegressionDataset(GenericPixelWiseDataset):
         if "mask" in item:
             item["mask"] = item["mask"].float()
         return item
-
 
     @staticmethod
     def _plot_sample(image, label, prediction=None, suptitle=None, show_axes=False, embedding_input=False, **kwargs):

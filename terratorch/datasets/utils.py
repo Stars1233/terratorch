@@ -4,9 +4,11 @@ import os
 from collections.abc import Iterator, Sequence
 from enum import Enum
 from functools import partial
+from pathlib import Path
 from typing import Any
 
 import numpy as np
+import rasterio
 import torch
 import torch.nn.functional as F
 from sklearn.decomposition import PCA
@@ -229,12 +231,14 @@ def clip_image_percentile(img: np.ndarray, q_lower: float = 1, q_upper: float = 
     return img
 
 
-def to_rgb(image_chw: np.ndarray,
+def to_rgb(
+    image_chw: np.ndarray,
     rgb_indices: list[int],
     p_low: float = 0.0,
     p_high: float = 99.0,
     gamma: float = 0.7,
-    eps: float = 1e-6,) -> np.ndarray:
+    eps: float = 1e-6,
+) -> np.ndarray:
     """
     Convert a channel-first image (C, H, W) to an RGB image for visualization.
 
@@ -309,3 +313,24 @@ def resize_hwc(img_hwc: np.ndarray, size_hw: tuple[int, int]) -> np.ndarray:
     )
 
     return img_resized.squeeze(0).permute(1, 2, 0).numpy()  # (H, W, C)
+
+
+def extract_georeference(path: Path) -> dict[str, Any] | None:
+    """
+    Returns georeference needed to align rasters for embedding generation in a collate-friendly format.
+    """
+    try:
+        with rasterio.open(path) as ds:
+            if ds.crs is None or ds.transform is None:
+                return None
+
+            t = ds.transform
+            left, bottom, right, top = ds.bounds
+            return {
+                "crs": ds.crs.to_string(),
+                "geotransform": np.array([t.c, t.a, t.b, t.f, t.d, t.e], dtype=np.float32),
+                "raster_shape": np.array([int(ds.height), int(ds.width)], dtype=np.float32),
+                "bounds": np.array([left, bottom, right, top], dtype=np.float32),
+            }
+    except Exception:
+        return None

@@ -1,9 +1,9 @@
 import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
-import warnings
 
 from terratorch.registry import TERRATORCH_DECODER_REGISTRY
+
 from .utils import ConvModule
 
 

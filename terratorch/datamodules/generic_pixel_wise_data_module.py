@@ -6,17 +6,29 @@ This module contains generic data modules for instantiation at runtime.
 
 import logging
 import os
-from albumentations.core.composition import BaseCompose
-from albumentations.core.composition import Compose
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Hashable, Iterable
 from pathlib import Path
-from typing import Any, Dict, Hashable, List, Optional
+from typing import Any, Dict, List, Optional
 
 import albumentations as A
 import kornia.augmentation as K
 import numpy as np
-import tacoreader
 import torch
+from albumentations.core.composition import BaseCompose, Compose
+
+try:
+    import tacoreader
+    import tacoreader.v1 as _tacoreader_v1
+    from tacoreader._legacy import is_legacy_format as _is_legacy_format
+    from tacoreader.dataset import TacoDataset as _TacoDataset
+
+    HAS_TACOREADER = True
+except ImportError:
+    HAS_TACOREADER = False
+    tacoreader = None  # type: ignore
+    _tacoreader_v1 = None  # type: ignore
+    _is_legacy_format = None  # type: ignore
+    _TacoDataset = None  # type: ignore
 from kornia.augmentation import AugmentationSequential
 from torch import Tensor
 from torch.utils.data import DataLoader
@@ -90,6 +102,7 @@ class GenericNonGeoSegmentationDataModule(NonGeoDataModule):
         pin_memory: bool = False,
         check_stackability: bool = True,
         tortilla_file: Path | None = None,
+        return_georeference: bool = False,
         **kwargs: Any,
     ) -> None:
         """Constructor
@@ -157,6 +170,7 @@ class GenericNonGeoSegmentationDataModule(NonGeoDataModule):
             into device/CUDA pinned memory before returning them. Defaults to False.
             check_stackability (bool): Check if all the files in the dataset has the same size and can be stacked.
             tortilla_file (Path | None): Path to a tortilla file. If provided, the dataset will be loaded from the tortilla file. Defaults to None.
+            return_georeference (bool): Whether to return georeference metadata info (CRS, Bounds, ...). Defaults to False.
 
         """
         super().__init__(GenericNonGeoSegmentationDataset, batch_size, num_workers, **kwargs)
@@ -191,6 +205,7 @@ class GenericNonGeoSegmentationDataModule(NonGeoDataModule):
         self.pca_step = pca_step
         self.expand_temporal_dimension = expand_temporal_dimension
         self.reduce_zero_label = reduce_zero_label
+        self.return_georeference = return_georeference
 
         self.train_transform = wrap_in_compose_is_list(train_transform)
         self.val_transform = wrap_in_compose_is_list(val_transform)
@@ -213,20 +228,64 @@ class GenericNonGeoSegmentationDataModule(NonGeoDataModule):
 
         self.check_stackability = check_stackability
 
-        if tortilla_file is None and not all([
-            train_data_root, 
-            val_data_root, 
-            test_data_root
-            ]
-        ):
-            raise MisconfigurationException("Either provide tortilla_file OR all train/val/test roots.")
+        if tortilla_file is not None and any([train_data_root, val_data_root, test_data_root]):
+            raise MisconfigurationException(
+                "Cannot provide both tortilla_file and train_data_root/val_data_root/test_data_root. "
+                "Use tortilla_file OR data roots (not both)."
+            )
 
-        self.tortilla_df = tacoreader.load(str(tortilla_file)) if tortilla_file is not None else None
+        if tortilla_file is not None and not HAS_TACOREADER:
+            raise ImportError(
+                "tacoreader is required to use tortilla files. Install it with: pip install terratorch[tortilla]"
+            )
+
+        if tortilla_file is not None:
+            path_str = str(tortilla_file)
+            # Legacy v1 formats (.tortilla, .taco) require tacoreader.v1.load
+            if _is_legacy_format is not None and _is_legacy_format(path_str):
+                if _tacoreader_v1 is None:
+                    raise ImportError(
+                        f"Legacy tortilla file format detected ({path_str!r}). "
+                        "tacoreader v2 is installed but tacoreader.v1 is not available. "
+                        "Install tacoreader<1.0 to read legacy files, or migrate to .tacozip format."
+                    )
+                logger.warning(
+                    "Loading legacy v1 tortilla file %r. Consider migrating to .tacozip format using tacotoolbox.",
+                    path_str,
+                )
+                self.tortilla_df = _tacoreader_v1.load(path_str)  # type: ignore[union-attr]
+            else:
+                self.tortilla_df = tacoreader.load(path_str)  # type: ignore
+        else:
+            self.tortilla_df = None
+
+    @staticmethod
+    def _is_v2_taco_dataset(ds: Any) -> bool:
+        """Return True if *ds* is a tacoreader v2 TacoDataset (not a pandas DataFrame)."""
+        return _TacoDataset is not None and isinstance(ds, _TacoDataset)
 
     def _get_tortilla_indices(self, stage: str) -> list[Hashable] | None:
         if self.tortilla_df is None:
             return None
 
+        # tacoreader v2: TacoDataset — materialise the top-level rows and filter
+        # by the 'tortilla:data_split' column when it is present.
+        if self._is_v2_taco_dataset(self.tortilla_df):
+            import pyarrow.compute as pc
+
+            stage_map = {"fit": "train", "validate": "validation", "test": "test"}
+            split_label = stage_map.get(stage)
+            if split_label is None:
+                return None
+
+            arrow_table = self.tortilla_df.data.to_arrow()  # type: ignore[union-attr]
+            if "tortilla:data_split" not in arrow_table.column_names:
+                # Dataset has no data_split column — return all row positions
+                return list(range(arrow_table.num_rows))
+            mask = pc.equal(arrow_table.column("tortilla:data_split"), split_label)
+            return [i for i, keep in enumerate(mask.to_pylist()) if keep]
+
+        # tacoreader v1: TortillaDataFrame (pandas DataFrame subclass)
         if stage in ["fit"]:
             return [i for i, row in self.tortilla_df.iterrows() if row["tortilla:data_split"] == "train"]
         if stage in ["validate"]:
@@ -260,6 +319,7 @@ class GenericNonGeoSegmentationDataModule(NonGeoDataModule):
                 reduce_zero_label=self.reduce_zero_label,
                 tortilla_df=self.tortilla_df,
                 tortilla_indices=self._get_tortilla_indices(stage),
+                return_georeference=self.return_georeference,
             )
         if stage in ["fit", "validate"]:
             self.val_dataset = self.dataset_class(
@@ -284,6 +344,7 @@ class GenericNonGeoSegmentationDataModule(NonGeoDataModule):
                 reduce_zero_label=self.reduce_zero_label,
                 tortilla_df=self.tortilla_df,
                 tortilla_indices=self._get_tortilla_indices(stage),
+                return_georeference=self.return_georeference,
             )
         if stage in ["test"]:
             self.test_dataset = self.dataset_class(
@@ -308,6 +369,7 @@ class GenericNonGeoSegmentationDataModule(NonGeoDataModule):
                 reduce_zero_label=self.reduce_zero_label,
                 tortilla_df=self.tortilla_df,
                 tortilla_indices=self._get_tortilla_indices(stage),
+                return_georeference=self.return_georeference,
             )
         if stage in ["predict"] and self.predict_root:
             self.predict_dataset = self.dataset_class(
@@ -326,6 +388,7 @@ class GenericNonGeoSegmentationDataModule(NonGeoDataModule):
                 pca_step=self.pca_step,
                 expand_temporal_dimension=self.expand_temporal_dimension,
                 reduce_zero_label=self.reduce_zero_label,
+                return_georeference=self.return_georeference,
             )
 
     def _dataloader_factory(self, split: str) -> DataLoader[dict[str, Tensor]]:
@@ -391,9 +454,9 @@ class GenericNonGeoPixelwiseRegressionDataModule(NonGeoDataModule):
         predict_output_bands: list[HLSBands | int | tuple[int, int] | str] | None = None,
         constant_scale: float = 1,
         rgb_indices: list[int] | None = None,
-        train_transform: Optional[List[Any]] = None,
-        val_transform: Optional[List[Any]] = None,
-        test_transform: Optional[List[Any]] = None,
+        train_transform: list[Any] | None = None,
+        val_transform: list[Any] | None = None,
+        test_transform: list[Any] | None = None,
         expand_temporal_dimension: bool = False,
         reduce_zero_label: bool = False,
         no_data_replace: float | None = None,

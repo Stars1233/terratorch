@@ -1,6 +1,7 @@
 # Copyright contributors to the Terratorch project
-from typing import List
 import logging
+from typing import List
+
 import torch
 import torch.nn.functional as F  # noqa: N812
 from segmentation_models_pytorch.base import SegmentationModel
@@ -11,9 +12,8 @@ from terratorch.models.utils import pad_images
 
 
 class EmbeddingOutputModel(Model, SegmentationModel):
-    """Model that encapsulates encoder and decoder and heads
-    Expects decoder to have a "forward_features" method, an embed_dims property
-    and optionally a "prepare_features_for_image_model" method.
+    """Model that wraps an encoder and potential neck
+    intended for embedding generation workflows.
     """
 
     def __init__(
@@ -29,8 +29,7 @@ class EmbeddingOutputModel(Model, SegmentationModel):
             encoder (nn.Module): Encoder to be used
             patch_size (int, optional): Patch size to be used during inference.
             padding (str, optional): Padding to be used during inference.
-            neck (nn.Module | None): Module applied between backbone and decoder.
-                Defaults to None, which applies the identity.
+            neck (nn.Module | None): Neck module applied after backbone. Defaults to None, which applies the identity.
         """
         super().__init__()
 
@@ -57,7 +56,7 @@ class EmbeddingOutputModel(Model, SegmentationModel):
         return []
 
     def forward(self, x: torch.Tensor, **kwargs) -> list[torch.Tensor]:
-        """Sequentially pass `x` through model`s encoder and necks"""
+        """Sequentially pass `x` through model`s encoder and neck"""
 
         if self.patch_size and self.padding is not None:
             x = pad_images(x, self.patch_size, self.padding)
@@ -66,4 +65,3 @@ class EmbeddingOutputModel(Model, SegmentationModel):
         features = self.neck(features)
 
         return features
-
