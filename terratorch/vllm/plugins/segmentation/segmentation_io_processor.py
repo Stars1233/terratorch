@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import base64
 import copy
 import datetime
@@ -36,7 +35,6 @@ if check_vllm_version("0.16.0", ">"):
     from vllm.renderers import BaseRenderer
 
 from .types import PluginConfig, RequestData, RequestOutput, SegmentationRequestInfo, TiledInferenceParameters
-from .utils import download_file_async, read_file_async
 
 logger = logging.getLogger(__name__)
 
@@ -232,7 +230,7 @@ class SegmentationIOProcessor(IOProcessor):
 
         return img, meta, coords
 
-    async def read_geotiff_async(
+    def read_geotiff(
         self,
         file_path: str,
         path_type: str,
@@ -251,9 +249,11 @@ class SegmentationIOProcessor(IOProcessor):
 
         data: BytesIO
         if file_path is not None and path_type == "url":
-            data = await download_file_async(file_path)
+            with urllib.request.urlopen(file_path) as response:
+                data = BytesIO(response.read())
         elif file_path is not None and path_type == "path":
-            data = await read_file_async(file_path)
+            with open(file_path, "rb") as f:
+                data = BytesIO(f.read())
         elif file_path is not None and path_type == "b64_json":
             image_data = base64.b64decode(file_path)
             data = BytesIO(image_data)
@@ -270,7 +270,7 @@ class SegmentationIOProcessor(IOProcessor):
                 coords = None
         return img, meta, coords
 
-    async def load_image(
+    def load_image(
         self,
         data: list[str],
         path_type: str,
@@ -298,7 +298,7 @@ class SegmentationIOProcessor(IOProcessor):
         location_coords = []
 
         for file in data:
-            img, meta, coords = await self.read_geotiff_async(file_path=file, path_type=path_type)
+            img, meta, coords = self.read_geotiff(file_path=file, path_type=path_type)
             # Rescaling (don't normalize on nodata)
             img = np.moveaxis(img, 0, -1)  # channels last for rescaling
             if indices is not None:
@@ -366,14 +366,6 @@ class SegmentationIOProcessor(IOProcessor):
         request_id: str | None = None,
         **kwargs,
     ) -> PromptType | Sequence[PromptType]:
-        return asyncio.run(self.pre_process_async(prompt, request_id, **kwargs))
-
-    async def pre_process_async(
-        self,
-        prompt: IOProcessorInput,
-        request_id: str | None = None,
-        **kwargs,
-    ) -> PromptType | Sequence[PromptType]:
 
         preprocess_start = datetime.now()
         image_data = dict(prompt)
@@ -388,7 +380,7 @@ class SegmentationIOProcessor(IOProcessor):
 
         indices = DEFAULT_INPUT_INDICES if not image_data["indices"] else image_data["indices"]
 
-        input_data, temporal_coords, location_coords, meta_data = await self.load_image(
+        input_data, temporal_coords, location_coords, meta_data = self.load_image(
             data=[image_data["data"]],
             indices=indices,
             path_type=image_data["data_format"],
@@ -487,6 +479,14 @@ class SegmentationIOProcessor(IOProcessor):
             prompts.append(prompt)
 
         return prompts
+
+    async def pre_process_async(
+        self,
+        prompt: IOProcessorInput,
+        request_id: str | None = None,
+        **kwargs,
+    ) -> PromptType | Sequence[PromptType]:
+        return self.pre_process(prompt, request_id, **kwargs)
 
     def post_process(
         self,
